@@ -10,20 +10,47 @@ export default function Operator({ title, itemId, fill, height, width, component
     return <div style={{ ...style }} className="group relative">
         <svg
             className={`z-40 absolute top-0 left-0 ${(isXRayMode) && 'scale-95'}`}
-            height={height * size + margin.y * (height - 1)}
-            width={isXRayMode ? (Math.max(...components.map((c) => c.x)) - Math.min(...components.map((c) => c.x)) + 1) * (size + margin.x) - margin.x : size}
+            height={isXRayMode
+                ? (Math.max(...components.map((c) => c.y)) - Math.min(...components.map((c) => c.y)) + 1) * (size + margin.y) - margin.y
+                : height * size + margin.y * (height - 1)}
+            width={isXRayMode
+                ? (Math.max(...components.map((c) => c.x)) - Math.min(...components.map((c) => c.x)) + 1) * (size + margin.x) - margin.x
+                : size}
             overflow="visible"
             xmlns="http://www.w3.org/2000/svg"
         >
             <rect
-                fill={fill}
-                height={height * size + (height - 1) * margin.y}
+                fill={isXRayMode ? '#f0f4ff' : fill}
+                stroke={isXRayMode ? fill : undefined}
+                strokeWidth={isXRayMode ? 2 : undefined}
+                height={isXRayMode
+                    ? (Math.max(...components.map((c) => c.y)) - Math.min(...components.map((c) => c.y)) + 1) * (size + margin.y) - margin.y
+                    : height * size + (height - 1) * margin.y}
                 rx="4"
-                width={size}
+                width={isXRayMode
+                    ? (Math.max(...components.map((c) => c.x)) - Math.min(...components.map((c) => c.x)) + 1) * (size + margin.x) - margin.x
+                    : size}
                 x="0"
                 y="0"
             />
-            {symbol}
+            {isXRayMode
+                ? components.map((comp, idx) => {
+                    const op = operators.find(o => o.id === comp.gateId);
+                    return (
+                        <g key={idx} transform={`translate(${comp.x * (size + margin.x)}, ${comp.y * (size + margin.y)})`}>
+                            <rect
+                                fill={op?.fill || '#ccc'}
+                                height={comp.h * size + (comp.h - 1) * margin.y}
+                                width={comp.w * size + (comp.w - 1) * margin.x}
+                                rx="4"
+                                x="0"
+                                y="0"
+                            />
+                            {op?.icon}
+                        </g>
+                    );
+                })
+                : <>{symbol}</>}
         </svg>
         {isCustom && <button
             aria-label="Toggle X-Ray Mode"

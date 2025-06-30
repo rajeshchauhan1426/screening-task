@@ -1,5 +1,5 @@
 import ReactGridLayout from 'react-grid-layout';
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import Operator from './Operator';
 import { margin, operators, size } from '../data/operators';
 
@@ -29,6 +29,8 @@ export default ({ droppingItem }) => {
     */
     const [droppingItemHeight, setDroppingItemHeight] = React.useState(1); // Height of the dropping item, used to adjust the placeholder height during drag-and-drop of a new gate
     const [draggedItemId, setDraggedItemId] = React.useState(null); // ID of the item being dragged, used to handle drag-and-drop events of existing gates
+    const [tooltip, setTooltip] = React.useState({ visible: false, x: 0, y: 0, message: '' });
+    const tooltipTimeout = useRef(null);
 
     // Set the dropping item height for placeholder based on the height described in the operators array
     useEffect(() => {
@@ -43,24 +45,79 @@ export default ({ droppingItem }) => {
         setLayout(newCircuit.layout);
     };
 
+    // Helper to show tooltip
+    const showTooltip = (message, event) => {
+        if (tooltipTimeout.current) clearTimeout(tooltipTimeout.current);
+        setTooltip({
+            visible: true,
+            x: event?.clientX || 0,
+            y: event?.clientY || 0,
+            message,
+        });
+        tooltipTimeout.current = setTimeout(() => {
+            setTooltip(t => ({ ...t, visible: false }));
+        }, 1500);
+    };
+
     // Handle dropping a new gate onto the circuit
     const onDrop = (newLayout, layoutItem, event) => {
         event.preventDefault();
-
         let gateId = event.dataTransfer.getData('gateId');
         const isCustomGate = event.dataTransfer.getData('isCustomGate') === 'true';
-        const height = operators.find(op => op.id === gateId)?.height || 1;
+        const opDef = operators.find(op => op.id === gateId);
+        const height = opDef?.height || 1;
+        const width = opDef?.width || 1;
 
         if (layoutItem.y + height > gridDimenY) {
-            return; // Prevent dropping if the gate exceeds the grid height
+            showTooltip('Gate exceeds grid height', event);
+            return;
         }
-        
+
+        // Check for overlap (including wide gates)
+        const willOverlap = newLayout.some(item => {
+            if (item.i === '__dropping-elem__') return false;
+            for (let dx = 0; dx < width; dx++) {
+                for (let dy = 0; dy < height; dy++) {
+                    for (let odx = 0; odx < (item.w || 1); odx++) {
+                        for (let ody = 0; ody < (item.h || 1); ody++) {
+                            if ((layoutItem.x + dx) === (item.x + odx) && (layoutItem.y + dy) === (item.y + ody)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        });
+        if (willOverlap) {
+            showTooltip('Invalid: Overlap detected', event);
+            return;
+        }
+
+        // Enforce one gate per column across all qubits for wide gates
+        for (let dx = 0; dx < width; dx++) {
+            const col = layoutItem.x + dx;
+            const colBlocked = newLayout.some(item => {
+                if (item.i === '__dropping-elem__') return false;
+                for (let odx = 0; odx < (item.w || 1); odx++) {
+                    if ((item.x + odx) === col) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+            if (colBlocked) {
+                showTooltip('Invalid: Column already occupied', event);
+                return;
+            }
+        }
+
         const newItem = {
             i: new Date().getTime().toString(), // unique id
             gateId: gateId,
             x: layoutItem.x,
             y: layoutItem.y,
-            w: 1,
+            w: width,
             h: height,
             isResizable: false,
         };
@@ -87,9 +144,63 @@ export default ({ droppingItem }) => {
             console.error('Dragged item ID is missing on drag stop!');
             return;
         }
+        // Find the moved item
+        const movedItem = newLayout.find(item => item.i === draggedItemId);
+        if (!movedItem) return;
+        const opDef = operators.find(op => op.id === movedItem.gateId);
+        const width = opDef?.width || 1;
+        const height = opDef?.height || 1;
+
+        // Check for overlap (including wide gates)
+        const willOverlap = newLayout.some(item => {
+            if (item.i === '__dropping-elem__' || item.i === movedItem.i) return false;
+            for (let dx = 0; dx < width; dx++) {
+                for (let dy = 0; dy < height; dy++) {
+                    for (let odx = 0; odx < (item.w || 1); odx++) {
+                        for (let ody = 0; ody < (item.h || 1); ody++) {
+                            if ((movedItem.x + dx) === (item.x + odx) && (movedItem.y + dy) === (item.y + ody)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        });
+        if (willOverlap) {
+            setDraggedItemId(null);
+            return;
+        }
+
+        // Enforce one gate per column across all qubits for wide gates
+        for (let dx = 0; dx < width; dx++) {
+            const col = movedItem.x + dx;
+            const colBlocked = newLayout.some(item => {
+                if (item.i === '__dropping-elem__' || item.i === movedItem.i) return false;
+                for (let odx = 0; odx < (item.w || 1); odx++) {
+                    if ((item.x + odx) === col) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+            if (colBlocked) {
+                setDraggedItemId(null);
+                return;
+            }
+        }
+
+        // Update the moved item's width and height
         const updatedLayout = newLayout.filter(
             item => item.i !== '__dropping-elem__' && item.y < gridDimenY,
         ).map(item => {
+            if (item.i === movedItem.i) {
+                return {
+                    ...item,
+                    w: width,
+                    h: height,
+                };
+            }
             return {
                 ...item,
                 gateId: layout.find(i => i.i === item.i)?.gateId,
@@ -109,6 +220,7 @@ export default ({ droppingItem }) => {
                 height: `${2 * containerPadding.y + (gridDimenY) * (size + margin.y) - margin.y}px`, // +1 to account for classical bit
                 overflow: 'hidden',
             }}
+            onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
         >
             <ReactGridLayout
                 allowOverlap={false}
@@ -216,7 +328,25 @@ export default ({ droppingItem }) => {
                     </div>
                 ))}
             </div>
-
+            {tooltip.visible && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        left: tooltip.x + 10,
+                        top: tooltip.y + 10,
+                        background: 'rgba(255,0,0,0.9)',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: 6,
+                        zIndex: 9999,
+                        pointerEvents: 'none',
+                        fontSize: 14,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                    }}
+                >
+                    {tooltip.message}
+                </div>
+            )}
         </div>
     );
 }
